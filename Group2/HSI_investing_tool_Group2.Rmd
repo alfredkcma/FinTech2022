@@ -1,0 +1,325 @@
+---
+title: "08_proj"
+author: "Group 2"
+date: "2022/11/12"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = F)
+library(tidyverse)
+library(quantmod)
+Sys.setlocale("LC_ALL","English")
+```
+
+```{r}
+# input data-set
+future_data = readRDS("hsioptionsfutures.rds")
+# remove missing value and variables' type coercion
+future_data = na.omit(future_data)
+future_data$Date = as.character(future_data$Date)
+```
+
+```{r}
+# extract the adjusted price for each stock from 2020/1/02 to 2021/12/31 from yahoo 
+tickers = c("HSI")
+price <- getSymbols("^HSI", from ="2020-1-2", to = "2021-12-31", 
+                    warnings = FALSE, auto.assign = TRUE)
+prices <- as.data.frame(Map(function(x) Ad(get(x)), tickers)[["HSI"]])
+prices = prices %>% mutate("Date" = rownames(prices))
+```
+
+```{r}
+# merge each option trading information with the stock price for that particular trading date
+stockprice_data = merge(prices, future_data, by = "Date")
+stockprice_data = na.omit(stockprice_data)
+```
+
+```{r}
+# re-code "Series" variable into "strike price" and "maturity of option"
+# filter out the "HSI" market and type coercion
+series_data = stockprice_data %>% 
+  separate(Series, into = c("HSI", "k", "c/p"), sep = c(3,8)) %>% 
+  filter(Market == "HSI") %>%
+  mutate("k" = as.numeric(k))
+```
+
+```{r}
+# filter out the options that are at the money(ATM) according to range of k/stock_price
+atm = series_data %>% filter(between(k/HSI.Adjusted, 0.95, 1.05))
+# filter out the options that are out of money(OTM)
+otm = series_data %>% filter(between(k/HSI.Adjusted, 0.8, 0.95))
+```
+
+```{r}
+# filter out the call options that are ATM according to expiration month code(A-L)
+atmcall = atm %>% 
+  separate(`c/p`, into = c("call/put", "number"), sep = c(1)) %>% 
+  filter(`call/put` %in% LETTERS[1:12]) %>% 
+  filter(Impliedvolatility!=0)
+# filter out the put options that are OTM according to expiration month code(M-X)
+otmput = otm %>% 
+  separate(`c/p`, into = c("call/put", "number"), sep = c(1)) %>% 
+  filter(`call/put` %in% LETTERS[13:24]) %>% 
+  filter(Impliedvolatility!=0)
+```
+
+Implied volatility represents the expectation of future volatility as reflected in the price of an option. The better the expectations of future prices, the higher the value of implied volatility. Based on B-S model, we can compute the Implied volatility($\sigma$)
+
+B-S model:
+
+$V_t=S_0N(d_1)-Ke^{-rT}N(d_2)$
+
+$d_1=ln(\frac{S_0}{K})+(r+0.5\sigma^2)T$
+
+$d_2=d_1-\sigma\sqrt{T}$
+
+
+```{r}
+# compute the mean Implied volatility for each maturity(A-L) for each date for ATM call options
+mean_iv_atmcall = atmcall %>% 
+  group_by(Date, `call/put`) %>% 
+  summarise(mean_c = mean(Impliedvolatility))
+# compute the mean Implied volatility for each maturity(M-X) for each date for OTM put options
+mean_iv_otmput = otmput %>% 
+  group_by(Date, `call/put`) %>% 
+  summarise(mean_p = mean(Impliedvolatility))
+# merge mean Implied volatility of ATM call options and that of OTM put options by "Date"
+mean_iv_atmcall_otmput = merge(mean_iv_atmcall, mean_iv_otmput, by = "Date")
+```
+
+```{r}
+# define 26 upper letters
+myletter = LETTERS[1:26]
+# filter out the dates that maturity of ATM call options is the same as that of OTM put options
+# compute the skew by mean IV of ATM call options minus mean IV of OTM put options
+skew_data = mean_iv_atmcall_otmput %>% 
+  filter(match(`call/put.y`, myletter)-match(`call/put.x`, myletter)==12) %>%
+  mutate("skew" = mean_p-mean_c, "maturity" = as.factor(match(`call/put.x`,myletter)))
+```
+
+```{r}
+# plot the relationship of skew and date
+# verify that when change of skew is very large as time goes, the stock price would drop probably. We select month 12 as an example.
+skew_data %>%
+  filter(maturity == "12") %>%
+  ggplot(aes(x=as.Date(Date), y=skew)) +
+  geom_line()
+```
+
+```{r}
+# build the function for different maturity months
+df_fill = function(df, cp, day){
+  m1 = skew_data %>%
+    filter(`call/put.x` == cp)
+  m1_date = m1 %>%
+    mutate("date" = Date) %>%
+    separate(Date, into = c("y", "m", "d"),sep="-")
+  update_y = 
+    as.numeric(m1_date$y) + ifelse(as.numeric(m1_date$maturity) < as.numeric(m1_date$m), 1,0)
+  m1_date$y = update_y
+  m1_date_clean = m1_date %>% 
+    mutate("tdate"= as.Date(paste(as.character(y),maturity, as.character(day), sep="-")))
+  m1_date_clean$date = as.Date(m1_date_clean$date)
+  diff_m1_date_clean = m1_date_clean %>%
+    mutate("diff"=as.numeric(difftime(tdate,date,units ="day"))) %>%
+    filter(between(diff,10,60)) %>%
+    select(date, skew)
+  df = rbind(df, diff_m1_date_clean)
+  return(df)
+}
+
+# generate the skew data and corresponding dates where the difference in issuance date and maturity date is between 10 and 60 days for ATM call options and OTM put options respectively
+df = data.frame()
+df = df_fill(df, "A", 31); df = df_fill(df, "B", 28); df = df_fill(df, "C", 31)
+df = df_fill(df, "D", 30); df = df_fill(df, "E", 31); df = df_fill(df, "F", 30)
+df = df_fill(df, "G", 31); df = df_fill(df, "H", 31); df = df_fill(df, "I", 30)
+df = df_fill(df, "J", 31); df = df_fill(df, "K", 30); df = df_fill(df, "L", 31)
+```
+
+```{R}
+# compute the mean skew of ATM call and OTM put options for each date
+df_clean = df %>%
+  group_by(date) %>%
+  summarise(mean_skew = mean(skew))
+```
+
+```{r}
+# extract the adjusted price for each stock from 2020/1/02 to current from yahoo 
+tickers = c("HSI")
+price <-getSymbols("^HSI", from ="2020-1-02", to = Sys.Date(), warnings = FALSE, auto.assign = TRUE)
+prices <- as.data.frame(Map(function(x) Ad(get(x)), tickers)[["HSI"]])
+prices = prices %>% mutate("date" = as.Date(rownames(prices)))
+prices = na.omit(prices)
+# extract the HSI trading volume for each stock
+volume <- as.data.frame(Map(function(x) Vo(get(x)), tickers)[["HSI"]])
+volume = volume %>% mutate("date" = rownames(volume))
+volume = na.omit(volume)
+```
+
+```{r}
+# add HSI trading volume for each date
+volume$date = as.Date(volume$date)
+merge_data = merge(df_clean,volume,by="date")
+```
+
+```{r}
+# generate the date after 7 days and replace the current date in data frame
+a_week_data = merge_data$date+7
+df_week = merge_data
+df_week$date = a_week_data
+# add stock prices in 7 days
+merge_data = merge(prices, df_week, by= "date")
+# re-code the "date" variable into "year", "month" and "day"
+merge_date_data = merge_data%>%
+  separate(date, into = c("y", "m", "d"), sep = "-")%>%
+  mutate("m" = as.factor(as.numeric(m)))
+```
+
+```{r}
+# fit a linear regression model that skew, month and trading volume are our factors
+lm_fit = lm(HSI.Adjusted~mean_skew + m + HSI.Volume, data = merge_date_data)
+anova(lm_fit)
+summary(lm_fit)
+# dignostic graphs
+par(mfrow= c(2,2))
+plot(lm_fit)
+```
+
+```{r}
+# predict stock price/return in 2020-6-22 assuming today is 2020-6-15
+as.numeric(predict(lm_fit,data.frame(mean_skew=7.589814, m=as.factor(6), `HSI.Volume` = 2123439500)))
+```
+
+```{r}
+# check the difference in predicted and actual value
+merge_data[merge_data$date == as.Date("2020-6-22"),]$`HSI.Adjusted` #actual stock price in 2022-6-24
+
+# justify if long or short strategy
+merge_data[merge_data$date == as.Date("2020-6-15"),]$`HSI.Adjusted` #actual stock price in 2022-6-17
+
+## Correct! price in 6.22 is greater than 6.15's price.
+```
+
+```{r}
+# generate monthly date
+date = as.factor(seq(as.Date("2020-3-1"), as.Date("2021-10-1"), by="month"))
+# initial option return vectors and stock return vectors
+return_vector = c()
+return_big = c()
+hsiw_v = c()
+```
+
+```{r}
+# loop every date
+for (i in date){
+  return_vector = c()
+  # generate the dataset for prediction
+  predict_data = merge_date_data[between(merge_data$date,
+                                       as.Date("2020-2-1"),as.Date(i)),]
+  predict_date_data = merge_data[between(merge_data$date,
+                                       as.Date("2020-2-1"),as.Date(i)),]
+  # predict the stock values in 7 days
+  predicted_value = predict(lm_fit, 
+                            data.frame(mean_skew = predict_data$mean_skew, 
+                                       m = predict_data$m, 
+                                       HSI.Volume = predict_data$HSI.Volume))
+  test_data = predict_date_data %>% mutate("pred_in_7days"= predicted_value)
+  actual_in_7days = test_data$HSI.Adjusted
+  test_data["actual_in_7days"] = actual_in_7days
+  # remove "HSI.Adjusted" column
+  test_data = test_data %>% select(-HSI.Adjusted)
+  current_date = test_data$date-7
+  test_data$date = current_date
+  final_data = merge(test_data,prices, by="date")
+  # generate the weekly dates
+  start = final_data$date[1]
+  end = final_data$date[length(final_data$date)]
+  keep_date = seq(start,end,by=7)
+  final_data = final_data[final_data$date %in% keep_date,]
+  # if predicted value in 7 days is greater than current stock price, then long, otherwise short
+  # if predicted value is continuing to increase(decrease), then remain the long(short) until predicted value in 7 days is lower(higher) than current stock price 
+  check = ifelse(final_data$pred_in_7days[1]>=final_data$HSI.Adjusted[1], 1, -1)
+  for (i in length(final_data$HSI.Adjusted)){
+    if (check == 1){
+      if (final_data$HSI.Adjusted[i] > final_data$pred_in_7days[i]){
+      return = (final_data$HSI.Adjusted[i] - final_data$actual_in_7days[i]) / 
+        final_data$actual_in_7days[i]
+      return_vector = rbind(return,return_vector)
+      check = -1
+      }
+      else{
+        return = (final_data$actual_in_7days[i] - final_data$HSI.Adjusted[i]) /
+          final_data$HSI.Adjusted[i]
+        return_vector = rbind(return,return_vector)
+      }}
+   else if (check == -1){
+      if (final_data$HSI.Adjusted[i] <= final_data$pred_in_7days[i]){
+      return = (final_data$actual_in_7days[i] - final_data$HSI.Adjusted[i]) /
+        final_data$HSI.Adjusted[i]
+      return_vector = rbind(return,return_vector)
+      check = 1
+      }
+     else{
+       return = (final_data$HSI.Adjusted[i] - final_data$actual_in_7days[i-1]) /
+         final_data$actual_in_7days[i-1]
+       return_vector = rbind(return,return_vector)
+     }
+   }}
+  # compute the returns of options and stock prices for all maturities
+  return = sum(return_vector)
+  return_big = rbind(return_big,return)
+  hsiw = (final_data$actual_in_7days[length(final_data$actual_in_7days)]-
+            final_data$HSI.Adjusted[1]) / final_data$HSI.Adjusted[1]
+  hsiw_v = rbind(hsiw_v,hsiw)
+}
+```
+
+```{r}
+# combine return of options and HSI stock return
+return = data.frame(date =  seq(as.Date("2020-3-1"), as.Date("2021-10-1"), by="month"), 
+                    "holding period return" = return_big, hsi = hsiw_v)
+# rename columns
+colnames(return) = c("date", "Strategy", "HSI")
+```
+
+```{R}
+# data pre-processing
+return = return %>% 
+  pivot_longer(c("Strategy", "HSI"), names_to = "type", values_to = "Holding_period_Return")
+# plot the relationship between Holding period return and date for HSI index and our strategy
+return %>%
+  ggplot(aes(x = date, y = Holding_period_Return, group = type, col = type)) +
+  geom_line(size = 2)
+```
+
+```{r}
+# 95% confidence interval of difference in predicted and actual stock prices
+ci = mean(final_data$pred_in_7days - final_data$actual_in_7days) + 
+  c(-1,1) * 1.96 * sd(final_data$pred_in_7days - final_data$actual_in_7days) / sqrt(nrow(final_data))
+u = mean(final_data$HSI.Adjusted)
+## tolerance
+tolerance = ci/ u
+tolerance
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
