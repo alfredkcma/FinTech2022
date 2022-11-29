@@ -1,0 +1,68 @@
+---
+title: "5008 Project"
+author: "Group 9"
+date: "2022-11-20"
+output: html_document
+---
+
+```{r}
+library(FinancialMath)
+library(jrvFinance)
+```
+
+```{r }
+# generate a function decision making
+decision <- function(cf,r){
+  npv <- npv(cf = cf,rate = r,immediate.start = TRUE)  #calculating NPV of CF
+  cat("\nthe NPV of this cash flow is:",npv)
+  k <- polyroot(rev(cf)) - 1;   #calculating IRR
+  cat("\nthe IRR of this cash flow is:", k)
+  
+  t1 <- length(k)
+  t2 <- length(cf) - 1
+  c <- matrix(nrow = t1,ncol = t2)
+  npvc <- rep(0,t1)  
+
+  c[,1] <- - cf[1]   #calculating investment stream when t = 0
+  for(i in (1:t1)){
+    for(j in (2:t2)){
+     if (j == t2){
+        c[i,t2] <- (1 + k[i])^(-1) * cf[t2 + 1]      
+     }  # calculating investment stream when t = T - 1
+      else{
+        c[i,j] <- (1 + k[i]) * c[i,j - 1] - cf[j]
+     }  # calculating investment stream when 1 ≤ t < T-1
+    
+  }
+   npvc[i] <- npv(cf = Re(c[i,]), rate = r, immediate.start = TRUE)
+  }  # calculating NPV of investment stream
+  cat("\nthe NPVC of this cash flow is:",npvc)
+  
+  if (npvc[1] * (Re(k)[1] - r) >= 0){  # Making decision based on Theorem 4 & 5
+    cat("\nAccept")
+  }
+  else {
+    cat("\nRefuse")
+  }
+}
+```
+
+```{r}
+#Example in paper: Real and Complex Internal Rates (page 15-16)
+cf <- c(-4,3,2.25,1.5,0.75,0,-0.75,-1.5,-2.25) 
+r1 <- 0.05
+r2 <- 0.12
+decision(cf,r1)
+decision(cf,r2)
+```
+
+
+```{r}
+#Generate a CF and a market rate by randomly picking numbers
+set.seed(123)
+cf5 <- sample(-100000:100000, 10, replace = T)
+r5 <- runif(1,-1,1)
+decision(cf5, r5)
+```
+
+

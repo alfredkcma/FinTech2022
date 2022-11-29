@@ -1,0 +1,80 @@
+---
+title: "table"
+author: "Xu Zhizhen"
+date: "2022-11-22"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#For the AIRR table demonstration in PPT
+library(jrvFinance)
+library(tidyverse)
+AIRRctok <- function(x,c,r){
+  i = 0
+  k = 0
+  n = length(x)-1
+  for(j in (1:(n-1))){
+    k[j]= (c[j+1]+x[j+1])/c[j]-1
+    i[j] = k[j]*c[j]
+  }
+  k[n] = x[n+1]/c[n]-1
+  i[n] = k[n]*c[n]
+  k[n+1]=NA
+  return(k)
+}
+
+AIRR <- function(x,c,r){
+  i = 0
+  k = 0
+  n = length(x)-1
+  for(j in (1:(n-1))){
+    k[j]= (c[j+1]+x[j+1])/c[j]-1
+    i[j] = k[j]*c[j]
+  }
+  k[n] = x[n+1]/c[n]-1
+  i[n] = k[n]*c[n]
+  ave = npv(cf=Re(i),rate =r)/npv(cf = Re(c),rate =r)
+  return(ave)
+}
+
+x <- c(-4,3,2.25,1.5,0.75,0,-0.75,-1.5,-2.25)
+k = matrix(0,nrow = 5,ncol = length(x))
+c = matrix(0,nrow = 5,ncol = length(x))
+c[1,] = c(4,1.417,-0.685,-2.256,-3.242,-3.58,-3.203,-2.037,0)
+c[2,] = c(4,2,1,-0.5, -1,-4,-2,-10.5,0)
+c[3,] = c(4,2.052,0.342,-1.068,-2.098,-2.65,-2.598,-1.781,0)
+c[4,] = c(4,4,4,4,4,4,4,4,0)
+c[5,] = c(4,2,1,1,-0.1,-0.3,-2,-1,0)
+decision = 0
+npvC = 0
+i = 1
+j = 1
+ave = 0
+k[1,]=AIRRctok(x,c[1,],0.05)
+while(i<=5) {
+  k[i,] = round(AIRRctok(x,c[i,],0.05),4)
+  ave[j+2] = round(AIRR(x,c[i,],0.05),4)
+  npvC[1+j] = round(npv(cf = c[i,],rate = 0.05),4)
+  if ((ave[j+2]-0.05)*npvC[1+j]>0){
+    decision[j+1]="invest"
+  } else {decision[j+1]="not invest"}
+  i = i+1
+  j = j+2
+}
+decision[11]=NA
+npvC[11]=NA
+COL = c(1,2,3,4,5,6,7,8,9,"npvC","AIRR","Decision")
+
+d <- data.frame(cashflow=x, c1=c[1,],k1=k[1,],c2=c[2,],k2=k[2,],c3=c[3,],k3=k[3,],c4=c[4,],k4=k[4,],c5=c[5,],k5=k[5,])
+
+test = rbind(d,npvC,ave,decision)
+t = t(test)
+knitr::kable(t,col.names = COL)
+```

@@ -1,0 +1,193 @@
+---
+title: "5008-Group9"
+output: html_document
+date: "2022-11-22"
+---
+Name: [Guo, Weiqi]
+Student ID: [20925426]\
+Name: [He, Jiacheng]
+Student ID: [20921341]\
+Name: [Wang, Jianhao]
+Student ID: [20888886]\
+Name: [Zhou, Sitian]
+Student ID: [20889385]\
+Name: [Feng, Boqiao]
+Student ID: [20666501]\
+Name: [Zhou, Yuxiang]
+Student ID: [20931401]\
+
+
+
+```{r}
+library(dbplyr)
+```
+
+## 1. Function to calculate Discount of cash flow x.
+```{r}
+Discount <- function(cash_vec,r){
+  PV = 0
+  for (i in 1:length(cash_vec)){
+    PV = PV + cash_vec[i]/((1+r)^(i-1))
+  }
+  return(PV)
+}
+```
+
+## 2. Function to calculate the internal rate of return, including IRRs that are complex number.
+```{r}
+IRR <- function(cash_vec){
+  cat("The internal rate k are",round(1/(polyroot(cash_vec))-1,digits = 3), "respectively\n")
+  return(round(1/(polyroot(cash_vec))-1,digits = 3))
+}
+```
+
+## 3. Function to calculate the investment stream.
+```{r}
+invest_cash <- function(cash_vec,irr){
+  c = c()
+  for (i in 1:(length(cash_vec)-1)){
+    if (i==1){
+      c[i] = -cash_vec[i]
+    }else{
+      c[i] = (1+irr)*c[i-1]-cash_vec[i]
+    }
+  }
+  return(c)
+}
+```
+
+## 4. Function to calculate the present value of investment stream and output it with the corresponding internal rate k using dataframe.
+```{r}
+PV_c <- function(cash_vec,market_r){
+  PV_cval = c()
+  k = IRR(cash_vec)
+  for (i in 1:length(k)){
+    c = invest_cash(cash_vec,k[i])
+    PV_cval[i] = Discount(Re(c),market_r)
+  }
+  df = data.frame(k,PV_cval)
+  print(df)
+  return(df)
+}
+```
+
+## 5. Function to make decision that whether the cash flow is desirable or not.
+```{r}
+Decision <- function(cash_vec,market_r){
+  # From paper we know that even if we have a lot of k, we only need to consider one of them because they will all give the same result.
+  # we choose the first k and the corresponding PV of investment cash.
+  df = PV_c(cash_vec,market_r)
+  k = df$k[1]
+  PV_cval = df$PV_cval[1]
+  if ((Re(k)-market_r)*PV_cval>0){
+    print("Desirable")
+  }else{
+    print("Undesirable")
+  }
+}
+```
+
+## 6. Function to compare 2 projects.
+```{r}
+Comparison <- function(x,y,market_r){
+  # Get all PV of investment streams and the corresponding k
+  x1 = PV_c(x,market_r) 
+  y1 = PV_c(y,market_r)
+  
+  # Find the similar PV_c value of 2 projects
+  YmatchIndex = array(0,length(x1$PV_cval))
+  min_val = 0.05 # set the tolerance
+  # Find the closest PV_c and then compare k
+  for (i in 1:length(x1$PV_cval)) {
+    YmatchIndex[i] = which.min(abs(y1$PV_cval - x1$PV_cval[i]))
+    if (min(abs(y1$PV_cval - x1$PV_cval[i]))<min_val){
+      min_val = min(abs(y1$PV_cval - x1$PV_cval[i]))
+      target_x = x1$PV_cval[i]
+      k_x = x1$k[i]
+      target_y = y1$PV_cval[YmatchIndex[i]]
+      k_y = y1$k[i]
+    }
+  }
+  # If we dont find the similar PV of investment stream(PV_c), we compare the projects using NPV directly.
+  if (min_val == 0.05){
+    print("The projects don't have similar PV of investment streams, so we calculate PV of cash flow to compare them directly.")
+    cat("The PVs of cash flow are",Discount(x,market_r),Discount(y,market_r),"respectively.\n")
+    if(Discount(x,market_r)>Discount(y,market_r)){
+      print("Choose X")
+    }else{
+      print("Choose Y")
+    }
+  }
+  # If we find the similar investment streams, we compare them using the corresponding k.
+  else{
+    cat("The equal or similar PV of investment streams are",target_x,target_y,"respectively and the corresponding k are",k_x,k_y,"\n")
+    # If PV_c is net borrowing, we choose smaller internal rate.
+    if (target_x & target_y <0){
+      if (Re(k_x)< Re(k_y)){
+        print("Choose X")
+      }else{
+        print("Choose Y")
+      }
+    }
+    # If PV_c is net investing, we choose larger internal rate.
+    else{
+      if (Re(k_x)>Re(k_y)){
+        print("Choose X")
+      }else{
+        print("Choose Y")
+      }
+    }
+  }
+}
+
+```
+
+## Our examples
+### 1.
+```{r}
+r = 0.1
+x1 = c(-1,6,-11,6)
+IRR(x1)
+invest_cash(x1,0)
+Decision(x1,r)
+
+x2 = c(-1,3,-2.5)
+IRR(x2)
+Decision(x2,r)
+Discount(x2,r)
+```
+### 2.
+```{r}
+cf = c(500, -1000, 0, 250, 250, 250)
+r=0.1
+Decision(cf,r)
+Discount(cf,r)
+```
+### 3.
+```{r}
+# Compare 2 projects
+r = 0.1
+x1 = c(-20,14,10,6,2,-2)
+y1 = c(-20,-6,1.1,8.2,15.3,22.4)
+Comparison(x1,y1,r)
+
+x2 = c(-1,5,-6)
+y2 = c(-1,4,-4)
+Comparison(x2,y2,r)
+```
+### 4.
+```{r}
+r=0.06
+cf1 <- c(-24,-4.8,-9.6,14.40,-4.8)
+cf2 <- c(-24,18.46,0,24,-18.46)
+cf3 <- c(-24,108,48,72,-60)
+a=IRR(cf1)
+b=IRR(cf2)
+c=IRR(cf3)
+Decision(cf1,r)
+Decision(cf2,r)
+Decision(cf3,r)
+Discount(cf1,r)
+Discount(cf2,r)
+Discount(cf3,r)
+```
